@@ -31,7 +31,7 @@ int get_twos_complement(string s) {
 	}
 }
 
-Simulator::Simulator(string input_file, bool b_enable, bool of_enable){
+Simulator::Simulator(string input_file){
 	//decode stage
 	prev_ins_decoded_is_branch = false;
 	control_flag = false;
@@ -66,16 +66,6 @@ Simulator::Simulator(string input_file, bool b_enable, bool of_enable){
 
 // modify this function for superscalar
 void Simulator::flush() {
-	for (int i = 0; i < 4; ++i) {
-		ins_pipeline[ins_index[i]].opcode = 7;
-		ins_pipeline[ins_index[i]].IR = "1111000000000000"; //assuming 16 bit instructions
-	}
-	for (int i = 0; i < NUM_REGISTERS; ++i) {
-		register_status[i] = -1;
-		wait_on_reg[i] = false;
-		raw_flag = false;
-	}
-	flush_pipeline = false;
 }
 
 
@@ -205,26 +195,27 @@ int Simulator::generate_id() {
 }
 
 int Simulator::get_rob_entry (int id) {
-	for (i = 0; i < rob.size(); ++i) {
+	for (int i = 0; i < rob.size(); ++i) {
 		if (rob[i].id == id) {
 			return i;
 		}
 	}
+	return 0;
 }
 
 pair<int, int> Simulator::get_rs_entry (int tag) {
-	return make_pair(tag/rs_width, tag%rs_width)
+	return make_pair(tag/rs_width, tag%rs_width);
 }
 
 
-int Simulator::n_fetch() {
+int Simulator::multi_fetch() {
 	while (decode_buffer.size() < n_width && n_fetch.size() > 0) {
 		decode_buffer.push(n_fetch.front());
 		n_fetch.pop();
 	}
 	while (n_fetch.size() < n_width) {
 		pipeline_instr p;
-		if (control_flag || raw_flag) {
+		if (control_flag) {
 			p.IR = "1111000000000000";
 		}
 		else {
@@ -237,13 +228,13 @@ int Simulator::n_fetch() {
 			p.pc = pc;
 			pc += 2;
 		}
-		n_fetch.push_back(p);
+		n_fetch.push(p);
 	}
 	return 1;
 }
 
 
-int Simulator::n_decode() {
+int Simulator::multi_decode() {
 	while (dispatch_buffer.size() < n_width && n_decode.size() > 0) {
 		dispatch_buffer.push(n_decode.front());
 		n_decode.pop();
@@ -288,7 +279,6 @@ int Simulator::dispatch() {
 			pipeline_instr p = dispatch_buffer.front();
 			int id = generate_id();
 			p.id = id;
-			rs.id = id;
 
 			r.id = id;
 			r.busy = true;
@@ -388,7 +378,7 @@ int Simulator::dispatch() {
 				rs.instr = p;
 				RS[2].push_back(rs);
 			}
-			else if (opcode == 6) {
+			else if (p.opcode == 6) {
 				p.imm_field = p.op2;
 				if (arf_flags[p.op1].valid) {
 					p.A = register_file[p.op1];
@@ -422,8 +412,8 @@ int Simulator::process_rs() {
 	for (int i = 0; i < 3; ++i) {
 		if (RS[i].size() > 0) {
 			for (int j = 0; j < RS[i].size(); ++i) {
-				if (RS[i][j].ready && exectute_buffer[i].size() < 1) {
-					exectute_buffer[i].push_back(RS[i][j].instr);
+				if (RS[i][j].ready && execute_buffer[i].size() < 1) {
+					execute_buffer[i].push_back(RS[i][j].instr);
 					new_issue[i] = true;
 					rob[get_rob_entry(RS[i][j].instr.id)].issued = true;
 					break;
@@ -436,9 +426,9 @@ int Simulator::process_rs() {
 
 int Simulator::multi_execute() {
 	for (int i = 0; i < 3; ++i) {
-		if (exectute_buffer[i].size() > 0 && new_issue[i]) {
+		if (execute_buffer[i].size() > 0 && new_issue[i]) {
 			execute (execute_buffer[i][0]);
-			execute_buffer[i].cycle_finish = m_clk + 1; // modify this per ALU opcode for varying latency
+			execute_buffer[i][0].cycle_finish = m_clk + 1; // modify this per ALU opcode for varying latency
 			new_issue[i] = false;
 		}
 	}
@@ -448,34 +438,34 @@ int Simulator::multi_execute() {
 int Simulator::broadcast_cdb(int tag, int val){
 	for (int i = 0; i < 3; ++i) {
 		for (int j = 0; j < RS[i].size(); ++j) {
-			instr p = RS[i][j].instr;
-			if (p.opcode <= 2 || p.opcode == 4) {
+			rs_entry p = RS[i][j];
+			if (p.instr.opcode <= 2 || p.instr.opcode == 4) {
 				if (p.operand[0].valid == false) {
 					if (p.operand[0].tag == tag) {
-						p.A = val;
+						p.instr.A = val;
 						p.operand[0].valid = true;
 					}
 				}
 				if (p.operand.size() == 2 && p.operand[1].valid == false) {
 					if (p.operand[1].tag == tag) {
-						p.B = val;
+						p.instr.B = val;
 						p.operand[1].valid = true;
 					}
 				}
 			}
-			else if (p.opcode == 3 || p.opcode == 6) {
+			else if (p.instr.opcode == 3 || p.instr.opcode == 6) {
 				if (p.operand[0].valid == false) {
 					if (p.operand[0].tag == tag) {
-						p.A = val;
+						p.instr.A = val;
 						p.operand[0].valid = true;
 					}
 				}
 			}
-			RS[i][j].instr = p;
+			RS[i][j] = p;
 		}
 	}
 	for (int i = 0; i < NUM_REGISTERS; ++i) {
-		if (arf_flags[i] == false && arf_flags[i] == tag) {
+		if (arf_flags[i].valid == false && arf_flags[i].tag == tag) {
 			register_file[i] = val;
 		}
 	}
@@ -491,8 +481,8 @@ int Simulator::complete_instr() {
 			rob[get_rob_entry(execute_buffer[i][0].id)].finished = true;
 			rob[get_rob_entry(execute_buffer[i][0].id)].instr = execute_buffer[i][0];
 			pair<int,int> rs_id = get_rs_entry (execute_buffer[i][0].rs_tag);
-			RS[rs_id->first].erase(rs_id->second);
-			execute_buffer[i].erase(0);
+			RS[rs_id.first].erase(RS[rs_id.first].begin() + rs_id.second);
+			execute_buffer[i].erase(execute_buffer[i].begin());
 			tomasulo_update();
 		}
 	}
@@ -518,24 +508,28 @@ int Simulator::tomasulo_update() {
 int Simulator::retire_instr() {
 	while (rob.size() > 0) {
 		if (rob.front().finished) {
-			if (rob.front().opcode == 4) {
+			if (rob.front().instr.opcode == 4) {
 				// go to store buffer
 			}
-			rob.pop()
+			rob.erase(rob.begin());
 		}
 		else {
 			break;
 		}
 	}
+	return 1;
 }
 
+int Simulator::process_store_buffer() {
+	return 1;
+}
 
 int Simulator::simulate(){
 	load_i_cache();
 	print_i_cache();
 	while(1){
-		n_fetch();
-		n_decode();
+		multi_fetch();
+		multi_decode();
 		dispatch();
 		process_rs();
 		multi_execute();
@@ -553,10 +547,8 @@ int Simulator::simulate(){
 	printf("clk cycles = %lld\n",m_clk + 1);
 	printf("CPI = %f\n",1.0*(m_clk + 1)/num_ins_executed);
 	printf("Stalls = %lld\n",num_stalls - 5);
-	if (!branch_pred_enabled){
-		printf("Control Stalls = %lld\n",num_control_stalls);
-		printf("RAW Stalls = %lld\n",num_stalls - 5 - num_control_stalls);
-	}
+	printf("Control Stalls = %lld\n",num_control_stalls);
+	printf("RAW Stalls = %lld\n",num_stalls - 5 - num_control_stalls);
 	return 1;
 }
 

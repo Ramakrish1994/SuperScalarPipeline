@@ -110,21 +110,23 @@ class Simulator{
 
 	int generate_id();
 	int get_rob_entry(int id);
+	int tomasulo_update();
+	int process_store_buffer();
 	pair<int,int> get_rs_entry(int tag);
 	
 public:
 	Simulator(string input_file);
-	int decode(pipeline_instr &p);
+	void decode(pipeline_instr &p);
 	int execute(pipeline_instr &p);
 	int simulate();
 
 	// SuperScalar Part
-	int n_fetch();
-	int n_decode();
+	int multi_fetch();
+	int multi_decode();
 	int dispatch();
 	int process_rs();
 	int multi_execute();
-	int braodcast_cdb();
+	int broadcast_cdb(int tag, int val);
 	int complete_instr();
 	int retire_instr();
 };
