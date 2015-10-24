@@ -156,11 +156,19 @@ void Simulator::decode(pipeline_instr& p){
 	}
 }
 
+int Simulator::forward_from_store_buffer(int addr){
+	for(int i=store_buffer.size();i>=0;i--){
+		if(store_buffer[i].addr == addr)
+			return i;
+	}
+	return -1;
+}
+
 int Simulator::execute (pipeline_instr &p){
 	long long int A = p.A;
 	long long int B = p.B;
 	long long int imm_field = p.imm_field;
-
+	int temp;
 	switch(p.opcode){
 
 		case 0: if (p.immediate) p.alu_output = A + imm_field;
@@ -177,13 +185,20 @@ int Simulator::execute (pipeline_instr &p){
 					break;
 
 		case 3: p.alu_output = 0 + A; 
-				if (d_cache.count (p.alu_output) > 0) {
-					p.load_md = d_cache[p.alu_output];
+				temp =  forward_from_store_buffer(p.alu_output);
+				if(temp != -1){
+					p.load_md = store_buffer[temp].val;
+
 				}
-				else {
-					p.load_md = 0;
+				else{
+					if (d_cache.count (p.alu_output) > 0) {
+						p.load_md = d_cache[p.alu_output];
+					}
+					else {
+						p.load_md = 0;
+					}
+					p.broadcast_output = p.load_md;
 				}
-				p.broadcast_output = p.load_md;
 
 				break;
 		case 4: p.alu_output = 0 + A; break;
@@ -207,6 +222,14 @@ int Simulator::get_rob_entry (int id) {
 		}
 	}
 	return 0;
+}
+int Simulator::find_store_buffer_entry(int id){
+	for (int i = 0; i < store_buffer.size(); ++i) {
+		if (store_buffer[i].id == id) {
+			return i;
+		}
+	}
+	return -1;
 }
 
 pair<int, int> Simulator::get_rs_entry (int tag) {
@@ -496,16 +519,24 @@ int Simulator::complete_instr() {
 			RS[rs_id.first].erase(RS[rs_id.first].begin() + rs_id.second);
 			execute_buffer[i].erase(execute_buffer[i].begin());
 			tomasulo_update();
-			if(execute_buffer[i][0].opcode == 5){
+			if(execute_buffer[i][0].opcode == 5){//JMP
 				control_stall = false;
 				pc = execute_buffer[i][0].alu_output;
 			}
-			if(execute_buffer[i][0].opcode == 6){
+			if(execute_buffer[i][0].opcode == 6){//BEQZ
 				control_stall = false;
 				if(execute_buffer[i][0].cond)
 					pc = execute_buffer[i][0].alu_output;
 				else
 					pc = execute_buffer[i][0].pc + 2;
+			}
+			if(execute_buffer[i][0].opcode == 4){
+				store_buff s;
+				s.id = execute_buffer[i][0].id;
+				s.addr = execute_buffer[i][0].alu_output;
+				s.val = execute_buffer[i][0].B;
+				store_buffer.push_back(s);
+				//d_cache[ins_pipeline[ins_index].alu_output] = ins_pipeline[ins_index].B;
 			}
 		}
 	}
@@ -532,7 +563,9 @@ int Simulator::retire_instr() {
 	while (rob.size() > 0) {
 		if (rob.front().finished) {
 			if (rob.front().instr.opcode == 4) {
-				// go to store buffer
+				int loc = find_store_buffer_entry(rob.front().instr.id);
+				d_cache[store_buffer[loc].addr] = store_buffer[loc].val;
+				store_buffer.erase(store_buffer.begin()+loc);
 			}
 			rob.erase(rob.begin());
 		}

@@ -61,13 +61,20 @@ class rob_entry {
 	}
 };
 
+class store_buff{
+public:
+	int id;
+	int addr;
+	int val;
+};
+
 class Simulator{
 	long long int m_clk;
 	bool control_flag;
 	bool control_stall;
 	map<int, int> d_cache;
 	map<long long int, string> i_cache;
-
+	vector<store_buff> store_buffer;
 
 	long long int pc;
 
@@ -129,6 +136,8 @@ public:
 	int broadcast_cdb(int tag, int val);
 	int complete_instr();
 	int retire_instr();
+	int find_store_buffer_entry(int id);
+	int forward_from_store_buffer(int addr);
 };
 
 int gen_int_from_string(string s);
