@@ -105,6 +105,7 @@ class Simulator{
 	int unique_id;
 	int rob_width;
 	int rs_width;
+	bool eoc;//end of code flag
 
 	rs_f arf_flags[NUM_REGISTERS];
 

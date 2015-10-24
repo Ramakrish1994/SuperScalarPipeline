@@ -62,6 +62,8 @@ Simulator::Simulator(string input_file){
 		new_issue[i] = false;
 	}
 
+	eoc = false;
+
 
 }
 
@@ -84,10 +86,10 @@ void Simulator::load_i_cache() {
 		if (instr == "1110000000000000") {
 			i_cache[pc_value] = instr;
 			pc_value += 2;
-			for (int i = 0; i < 5; ++i) {
-				i_cache[pc_value] = "1111000000000000";
-				pc_value += 2;
-			}
+			// for (int i = 0; i < 5; ++i) {
+			// 	i_cache[pc_value] = "1111000000000000";
+			// 	pc_value += 2;
+			// }
 		}
 		else {
 			i_cache[pc_value] = instr;
@@ -128,7 +130,7 @@ void Simulator::decode(pipeline_instr& p){
 	p.immediate = (get_int_from_string(IR.substr(3,1)) >= 1)?true:false;
 
 	if(p.opcode == 7 && p.immediate == 0)
-		p.opcode = 8;
+		p.opcode = 7;
 
 	if (p.opcode == 5){ // jump instruction
 		p.op1 = get_twos_complement(IR.substr(4,8));
@@ -157,7 +159,7 @@ void Simulator::decode(pipeline_instr& p){
 }
 
 int Simulator::forward_from_store_buffer(int addr){
-	for(int i=store_buffer.size();i>=0;i--){
+	for(int i=store_buffer.size()-1;i>=0;i--){
 		if(store_buffer[i].addr == addr)
 			return i;
 	}
@@ -206,6 +208,7 @@ int Simulator::execute (pipeline_instr &p){
 		case 5: p.alu_output = p.pc + (imm_field*2); p.cond = 1; break;
 		case 6: p.alu_output = p.pc + (imm_field*2); p.cond = (A == 0); break;
 	}
+	cout<<"done single execute"<<endl;
 	return 1;
 }
 
@@ -237,28 +240,28 @@ pair<int, int> Simulator::get_rs_entry (int tag) {
 }
 
 
+
 int Simulator::multi_fetch() {
 	if(control_stall == false){
+		cout<< "size: "<<decode_buffer.size()<<n_fetch.size()<<endl;
 		while (decode_buffer.size() < n_width && n_fetch.size() > 0) {
+			//cout<<" multi fetch 2: "<<n_fetch.front().IR<<endl;
 			decode_buffer.push(n_fetch.front());
 			n_fetch.pop();
 		}
-		while (n_fetch.size() < n_width) {
+		while (n_fetch.size() < n_width && ! eoc) {
 			pipeline_instr p;
-			if (control_flag) {
-				p.IR = "1111000000000000";
-			}
-			else {
-				if (i_cache.count(pc) == 0) {
-					p.IR = "1111000000000000";
-				}
-				else {
-					p.IR = i_cache[pc];
-				}
+			if (i_cache.count(pc)>0) {
+				p.IR = i_cache[pc];
+			
 				p.pc = pc;
 				pc += 2;
+			
+				cout<<" multi fetch : "<<p.IR<<endl;
+				n_fetch.push(p);
 			}
-			n_fetch.push(p);
+			else
+				eoc = true;
 		}
 	}
 	return 1;
@@ -266,26 +269,30 @@ int Simulator::multi_fetch() {
 
 
 int Simulator::multi_decode() {
+	cout<<"came into multi decode"<<endl;
 	while (dispatch_buffer.size() < n_width && n_decode.size() > 0) {
 		dispatch_buffer.push(n_decode.front());
 		n_decode.pop();
 	}
-	while (n_decode.size() < n_width) {
-		if (decode_buffer.size() > 0) {
-			pipeline_instr p = decode_buffer.front();
-			decode_buffer.pop();
-			decode(p);
-			n_decode.push(p);
-			if(p.opcode == 5 || p.opcode == 6){
-				flush();
-				control_stall = true;
-			}
+	while (n_decode.size() < n_width && decode_buffer.size() > 0) {
+		
+		pipeline_instr p = decode_buffer.front();
+		decode_buffer.pop();
+		decode(p);
+		n_decode.push(p);
+		if(p.opcode == 5 || p.opcode == 6){
+			flush();
+			control_stall = true;
 		}
+		cout<< "Multi Decode: "<<p.opcode<<endl;
+		
+
 	}
 	return 1;
 }
 
 int Simulator::dispatch() {
+	cout<<"came into Dispatch"<<endl;
 	bool dispatch = true;
 	while (dispatch_buffer.size() > 0 && dispatch) {
 		dispatch = false;
@@ -460,8 +467,10 @@ int Simulator::process_rs() {
 }
 
 int Simulator::multi_execute() {
+	cout<<"came into multi execute"<<endl;
 	for (int i = 0; i < 3; ++i) {
 		if (execute_buffer[i].size() > 0 && new_issue[i]) {
+			cout<<execute_buffer[i][0].opcode<<endl;
 			execute (execute_buffer[i][0]);
 			execute_buffer[i][0].cycle_finish = m_clk + 1; // modify this per ALU opcode for varying latency
 			new_issue[i] = false;
@@ -508,6 +517,7 @@ int Simulator::broadcast_cdb(int tag, int val){
 }
 
 int Simulator::complete_instr() {
+	cout<<"came into multi complete instr"<<endl;
 	for (int i = 0; i < 3; ++i) {
 		if (execute_buffer[i].size() > 0 && execute_buffer[i][0].cycle_finish == m_clk) {
 			if (execute_buffer[i][0].opcode <= 3) {
@@ -567,6 +577,8 @@ int Simulator::retire_instr() {
 				d_cache[store_buffer[loc].addr] = store_buffer[loc].val;
 				store_buffer.erase(store_buffer.begin()+loc);
 			}
+			if (rob.front().instr.opcode == 7)
+				return 0; 
 			rob.erase(rob.begin());
 		}
 		else {
