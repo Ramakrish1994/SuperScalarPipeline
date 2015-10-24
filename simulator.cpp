@@ -443,6 +443,7 @@ int Simulator::dispatch() {
 				rob.push_back(r);
 			}
 
+			
 			dispatch_buffer.pop();
 		}
 
