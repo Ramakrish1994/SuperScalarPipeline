@@ -35,6 +35,7 @@ Simulator::Simulator(string input_file){
 	//decode stage
 	prev_ins_decoded_is_branch = false;
 	control_flag = false;
+	control_stall = false;
 	m_clk = 0;
 
 	pc = 0;
@@ -66,6 +67,11 @@ Simulator::Simulator(string input_file){
 
 // modify this function for superscalar
 void Simulator::flush() {
+	int i;
+	for(i=0;i<decode_buffer.size();i++)
+		decode_buffer.pop();
+	for(i=0;i<n_fetch.size();i++)
+		n_fetch.pop();
 }
 
 
@@ -209,26 +215,28 @@ pair<int, int> Simulator::get_rs_entry (int tag) {
 
 
 int Simulator::multi_fetch() {
-	while (decode_buffer.size() < n_width && n_fetch.size() > 0) {
-		decode_buffer.push(n_fetch.front());
-		n_fetch.pop();
-	}
-	while (n_fetch.size() < n_width) {
-		pipeline_instr p;
-		if (control_flag) {
-			p.IR = "1111000000000000";
+	if(control_stall == false){
+		while (decode_buffer.size() < n_width && n_fetch.size() > 0) {
+			decode_buffer.push(n_fetch.front());
+			n_fetch.pop();
 		}
-		else {
-			if (i_cache.count(pc) == 0) {
+		while (n_fetch.size() < n_width) {
+			pipeline_instr p;
+			if (control_flag) {
 				p.IR = "1111000000000000";
 			}
 			else {
-				p.IR = i_cache[pc];
+				if (i_cache.count(pc) == 0) {
+					p.IR = "1111000000000000";
+				}
+				else {
+					p.IR = i_cache[pc];
+				}
+				p.pc = pc;
+				pc += 2;
 			}
-			p.pc = pc;
-			pc += 2;
+			n_fetch.push(p);
 		}
-		n_fetch.push(p);
 	}
 	return 1;
 }
@@ -245,6 +253,10 @@ int Simulator::multi_decode() {
 			decode_buffer.pop();
 			decode(p);
 			n_decode.push(p);
+			if(p.opcode == 5 || p.opcode == 6){
+				flush();
+				control_stall = true;
+			}
 		}
 	}
 	return 1;
@@ -484,6 +496,17 @@ int Simulator::complete_instr() {
 			RS[rs_id.first].erase(RS[rs_id.first].begin() + rs_id.second);
 			execute_buffer[i].erase(execute_buffer[i].begin());
 			tomasulo_update();
+			if(execute_buffer[i][0].opcode == 5){
+				control_stall = false;
+				pc = execute_buffer[i][0].alu_output;
+			}
+			if(execute_buffer[i][0].opcode == 6){
+				control_stall = false;
+				if(execute_buffer[i][0].cond)
+					pc = execute_buffer[i][0].alu_output;
+				else
+					pc = execute_buffer[i][0].pc + 2;
+			}
 		}
 	}
 	return 1;

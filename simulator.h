@@ -64,7 +64,7 @@ class rob_entry {
 class Simulator{
 	long long int m_clk;
 	bool control_flag;
-
+	bool control_stall;
 	map<int, int> d_cache;
 	map<long long int, string> i_cache;
 
