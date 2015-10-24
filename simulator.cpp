@@ -577,13 +577,18 @@ int Simulator::retire_instr() {
 				d_cache[store_buffer[loc].addr] = store_buffer[loc].val;
 				store_buffer.erase(store_buffer.begin()+loc);
 			}
-			if (rob.front().instr.opcode == 7)
-				return 0; 
+			
 			rob.erase(rob.begin());
+			num_ins_executed++;
 		}
 		else {
 			break;
 		}
+		if (rob.front().instr.opcode == 7){
+			num_ins_executed++;
+			return 0; 
+		}
+				
 	}
 	return 1;
 }
@@ -614,9 +619,9 @@ int Simulator::simulate(){
 	print_d_cache();
 	printf("clk cycles = %lld\n",m_clk + 1);
 	printf("CPI = %f\n",1.0*(m_clk + 1)/num_ins_executed);
-	printf("Stalls = %lld\n",num_stalls - 5);
-	printf("Control Stalls = %lld\n",num_control_stalls);
-	printf("RAW Stalls = %lld\n",num_stalls - 5 - num_control_stalls);
+	// printf("Stalls = %lld\n",num_stalls - 5);
+	// printf("Control Stalls = %lld\n",num_control_stalls);
+	// printf("RAW Stalls = %lld\n",num_stalls - 5 - num_control_stalls);
 	return 1;
 }
 
