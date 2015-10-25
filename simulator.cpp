@@ -121,7 +121,7 @@ void Simulator::print_d_cache() {
 void Simulator::print_reg_file() {
 	cout << "Reg File\n";
 	for (int i = 0; i < NUM_REGISTERS; ++i) {
-		cout << i << ": " << register_file[i] << " " << arf_flags[i].valid << arf_flags [i]. tag << endl;
+		cout << i << ": " << register_file[i] << " " << arf_flags[i].valid <<" "<< arf_flags [i]. tag << endl;
 	}
 }
 
@@ -566,11 +566,12 @@ int Simulator::complete_instr() {
 					else
 						pc = execute_buffer[i][0].pc + 2;
 				}
-				if(execute_buffer[i][0].opcode == 4){
+				if(execute_buffer[i][0].opcode == 4){//Store
 					store_buff s;
 					s.id = execute_buffer[i][0].id;
 					s.addr = execute_buffer[i][0].alu_output;
 					s.val = execute_buffer[i][0].B;
+					cout<<"adding to store buffer: "<<s.id<<" "<<s.addr<<" "<<s.val<<endl;
 					store_buffer.push_back(s);
 					//d_cache[ins_pipeline[ins_index].alu_output] = ins_pipeline[ins_index].B;
 				}
@@ -611,6 +612,7 @@ int Simulator::retire_instr() {
 			if (rob.front().instr.opcode == 4) {
 				int loc = find_store_buffer_entry(rob.front().instr.id);
 				d_cache[store_buffer[loc].addr] = store_buffer[loc].val;
+				cout<<"writing to memory from store buffer: "<<store_buffer[loc].id<<" "<<store_buffer[loc].addr<<" "<<store_buffer[loc].val<<endl;
 				store_buffer.erase(store_buffer.begin()+loc);
 			}
 			
