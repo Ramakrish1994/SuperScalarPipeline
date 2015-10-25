@@ -11,6 +11,7 @@
 #define NUM_REGISTERS 8
 #define DEPTH_PIPELINE 6
 #define MAX_ENTRIES 100000
+#define MAX_RS 32
 
 using namespace std;
 
@@ -45,6 +46,7 @@ struct rs_entry {
 	bool busy;
 	bool ready;
 	vector<rs_f> operand;
+	int id;
 };
 
 class rob_entry {
@@ -85,7 +87,7 @@ class Simulator{
 	}
 
 	bool prev_ins_decoded_is_branch;
-
+	bool halt_flag;
 
 	string input_code;
 
@@ -103,6 +105,7 @@ class Simulator{
 	// SuperScalar Part
 	int n_width;
 	int unique_id;
+	int rs_tag;
 	int rob_width;
 	int rs_width;
 	bool eoc;//end of code flag
@@ -115,8 +118,11 @@ class Simulator{
 	vector<rs_entry> RS[3];
 	vector<pipeline_instr> execute_buffer[3];
 	bool new_issue[3];
+	int num_units[3];
+	int latency[8];
 
 	int generate_id();
+	int generate_tag();
 	int get_rob_entry(int id);
 	int tomasulo_update();
 	int process_store_buffer();

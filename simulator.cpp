@@ -44,6 +44,12 @@ Simulator::Simulator(string input_file){
 		arf_flags[i].valid = true;
 	}
 
+	for(int i = 0; i < 8; ++i) {
+		latency[i] = 1;
+	}
+	for(int i = 0; i < 3; ++i) {
+		num_units[i] = 2;
+	}
 	register_file[0] = 0;
 
 
@@ -53,10 +59,12 @@ Simulator::Simulator(string input_file){
 	num_stalls = 0;
 	num_control_stalls = 0;
 
-	rs_width = 2;
+	rs_width = 4;
 	n_width = 4;
 	rob_width = 8;
+
 	unique_id = 0;
+	rs_tag = 0;
 
 	for (int i = 0; i < 3; ++i) {
 		new_issue[i] = false;
@@ -70,9 +78,9 @@ Simulator::Simulator(string input_file){
 // modify this function for superscalar
 void Simulator::flush() {
 	int i;
-	for(i=0;i<decode_buffer.size();i++)
+	while(decode_buffer.size() > 0)
 		decode_buffer.pop();
-	for(i=0;i<n_fetch.size();i++)
+	while(n_fetch.size() > 0)	
 		n_fetch.pop();
 }
 
@@ -86,10 +94,6 @@ void Simulator::load_i_cache() {
 		if (instr == "1110000000000000") {
 			i_cache[pc_value] = instr;
 			pc_value += 2;
-			// for (int i = 0; i < 5; ++i) {
-			// 	i_cache[pc_value] = "1111000000000000";
-			// 	pc_value += 2;
-			// }
 		}
 		else {
 			i_cache[pc_value] = instr;
@@ -117,7 +121,7 @@ void Simulator::print_d_cache() {
 void Simulator::print_reg_file() {
 	cout << "Reg File\n";
 	for (int i = 0; i < NUM_REGISTERS; ++i) {
-		cout << i << ": " << register_file[i] << endl;
+		cout << i << ": " << register_file[i] << " " << arf_flags[i].valid << arf_flags [i]. tag << endl;
 	}
 }
 
@@ -134,15 +138,10 @@ void Simulator::decode(pipeline_instr& p){
 
 	if (p.opcode == 5){ // jump instruction
 		p.op1 = get_twos_complement(IR.substr(4,8));
-		prev_ins_decoded_is_branch = true;
-		control_flag = true;
 	}
 	else if (p.opcode == 6){ // BEQZ
 		p.op1 = get_int_from_string(IR.substr(4,4));
 		p.op2 = get_twos_complement(IR.substr(8,8));
-		prev_ins_decoded_is_branch = true;
-		control_flag = true;
-		
 
 	}
 	else if (p.opcode <= 4) { // add, sub, mul, ld,st
@@ -205,10 +204,9 @@ int Simulator::execute (pipeline_instr &p){
 				break;
 		case 4: p.alu_output = 0 + A; break;
 
-		case 5: p.alu_output = p.pc + (imm_field*2); p.cond = 1; break;
+		case 5: p.alu_output = p.pc + (imm_field*2); p.cond = 1;  break;
 		case 6: p.alu_output = p.pc + (imm_field*2); p.cond = (A == 0); break;
 	}
-	cout<<"done single execute"<<endl;
 	return 1;
 }
 
@@ -216,6 +214,12 @@ int Simulator::generate_id() {
 	int id = unique_id;
 	unique_id = (unique_id + 1)%MAX_ENTRIES;
 	return id;
+}
+
+int Simulator::generate_tag() {
+	int tag = rs_tag;
+	rs_tag = (rs_tag + 1)%MAX_RS;
+	return tag;
 }
 
 int Simulator::get_rob_entry (int id) {
@@ -235,21 +239,26 @@ int Simulator::find_store_buffer_entry(int id){
 	return -1;
 }
 
-pair<int, int> Simulator::get_rs_entry (int tag) {
-	return make_pair(tag/rs_width, tag%rs_width);
+pair<int, int> Simulator::get_rs_entry (int id) {
+	for (int i = 0; i < 3; ++i) {
+		for (int j = 0; j < RS[i].size(); ++j) {
+			if (RS[i][j].id == id) {
+				return make_pair(i,j);
+			}
+		}
+	}
+	return make_pair(0,0);
 }
 
 
 
 int Simulator::multi_fetch() {
-	if(control_stall == false){
-		cout<< "size: "<<decode_buffer.size()<<n_fetch.size()<<endl;
+	if(control_stall == false && halt_flag == false){
 		while (decode_buffer.size() < n_width && n_fetch.size() > 0) {
-			//cout<<" multi fetch 2: "<<n_fetch.front().IR<<endl;
 			decode_buffer.push(n_fetch.front());
 			n_fetch.pop();
 		}
-		while (n_fetch.size() < n_width && ! eoc) {
+		while (n_fetch.size() < n_width) {
 			pipeline_instr p;
 			if (i_cache.count(pc)>0) {
 				p.IR = i_cache[pc];
@@ -257,11 +266,12 @@ int Simulator::multi_fetch() {
 				p.pc = pc;
 				pc += 2;
 			
-				cout<<" multi fetch : "<<p.IR<<endl;
+				cout<<"Fetch : "<<p.IR<<endl;
 				n_fetch.push(p);
 			}
-			else
-				eoc = true;
+			if (i_cache.count(pc) == 0) {
+				break;
+			}
 		}
 	}
 	return 1;
@@ -269,22 +279,25 @@ int Simulator::multi_fetch() {
 
 
 int Simulator::multi_decode() {
-	cout<<"came into multi decode"<<endl;
 	while (dispatch_buffer.size() < n_width && n_decode.size() > 0) {
 		dispatch_buffer.push(n_decode.front());
 		n_decode.pop();
 	}
-	while (n_decode.size() < n_width && decode_buffer.size() > 0) {
+	while (n_decode.size() < n_width && decode_buffer.size() > 0 && !control_stall) {
 		
 		pipeline_instr p = decode_buffer.front();
 		decode_buffer.pop();
 		decode(p);
 		n_decode.push(p);
+		cout<<"Decode: "<<p.IR<<endl;
 		if(p.opcode == 5 || p.opcode == 6){
 			flush();
 			control_stall = true;
 		}
-		cout<< "Multi Decode: "<<p.opcode<<endl;
+		if (p.opcode == 7) {
+			flush();
+			halt_flag = true;
+		}
 		
 
 	}
@@ -292,9 +305,9 @@ int Simulator::multi_decode() {
 }
 
 int Simulator::dispatch() {
-	cout<<"came into Dispatch"<<endl;
 	bool dispatch = true;
-	while (dispatch_buffer.size() > 0 && dispatch) {
+	int num_dispatch = 0;
+	while (dispatch_buffer.size() > 0 && dispatch && num_dispatch < n_width) {
 		dispatch = false;
 		if (dispatch_buffer.front().opcode <= 2) {
 			if (RS[0].size() < rs_width) {
@@ -320,16 +333,14 @@ int Simulator::dispatch() {
 			rob_entry r;
 			pipeline_instr p = dispatch_buffer.front();
 			int id = generate_id();
+			int tag = generate_tag();
 			p.id = id;
 
 			r.id = id;
+			rs.id = id;
 			r.busy = true;
-			r.instr = p;
 
-			rob.push_back(r);
 			if (p.opcode <= 2) {
-				arf_flags[p.op1].valid = false;
-				arf_flags[p.op1].tag = RS[0].size();
 				if (arf_flags[p.op2].valid) {
 					p.A = register_file[p.op2];
 					rs_f e1;
@@ -362,13 +373,15 @@ int Simulator::dispatch() {
 						rs.operand.push_back(e1);
 					}
 				}
-				p.rs_tag = RS[0].size();
+				arf_flags[p.op1].valid = false;
+				arf_flags[p.op1].tag = tag;
+				p.rs_tag = tag;
 				rs.instr = p;
+				r.instr = p;
 				RS[0].push_back(rs);
+				rob.push_back(r);
 			}
 			else if (p.opcode == 3) {
-				arf_flags[p.op1].valid = false;
-				arf_flags[p.op1].tag = rs_width + RS[1].size();
 				if (arf_flags[p.op2].valid) {
 					p.A = register_file[p.op2];
 					rs_f e1;
@@ -381,9 +394,13 @@ int Simulator::dispatch() {
 					e1.tag = arf_flags[p.op2].tag;
 					rs.operand.push_back(e1);
 				}
-				p.rs_tag = rs_width + RS[1].size();
+				arf_flags[p.op1].valid = false;
+				arf_flags[p.op1].tag = tag;
+				p.rs_tag = tag;
 				rs.instr = p;
+				r.instr = p;
 				RS[1].push_back(rs);
+				rob.push_back(r);
 			}
 			else if (p.opcode == 4) {
 				if (arf_flags[p.op2].valid) {
@@ -410,15 +427,19 @@ int Simulator::dispatch() {
 					e1.tag = arf_flags[p.op1].tag;
 					rs.operand.push_back(e1);
 				}
-				p.rs_tag = rs_width + RS[1].size();
+				p.rs_tag = tag;
 				rs.instr = p;
+				r.instr = p;
 				RS[1].push_back(rs);
+				rob.push_back(r);
 			}
 			else if (p.opcode == 5) {
 				p.imm_field = p.op1;
-				p.rs_tag = rs_width*2 + RS[2].size();
+				p.rs_tag = tag;
 				rs.instr = p;
+				r.instr = p;
 				RS[2].push_back(rs);
+				rob.push_back(r);
 			}
 			else if (p.opcode == 6) {
 				p.imm_field = p.op2;
@@ -434,16 +455,20 @@ int Simulator::dispatch() {
 					e1.tag = arf_flags[p.op1].tag;
 					rs.operand.push_back(e1);
 				}
-				p.rs_tag = rs_width*2 + RS[2].size();
+				p.rs_tag = tag;
 				rs.instr = p;
+				r.instr = p;
 				RS[2].push_back(rs);
+				rob.push_back(r);
 			}
 			else {
 				r.finished = true;
+				r.instr = p;
 				rob.push_back(r);
 			}
 
-			
+		    cout<<"Dispatch: "<<p.IR<<endl;	
+			num_dispatch++;
 			dispatch_buffer.pop();
 		}
 
@@ -452,14 +477,15 @@ int Simulator::dispatch() {
 }
 
 int Simulator::process_rs() {
+	tomasulo_update();
 	for (int i = 0; i < 3; ++i) {
 		if (RS[i].size() > 0) {
-			for (int j = 0; j < RS[i].size(); ++i) {
-				if (RS[i][j].ready && execute_buffer[i].size() < 1) {
+			for (int j = 0; j < RS[i].size(); ++j) {
+				if (RS[i][j].ready && execute_buffer[i].size() < num_units[i]) {
 					execute_buffer[i].push_back(RS[i][j].instr);
+					execute_buffer[i][execute_buffer[i].size() - 1].cycle_finish = m_clk + latency[RS[i][j].instr.opcode]; // modify this per ALU opcode for varying latency
 					new_issue[i] = true;
 					rob[get_rob_entry(RS[i][j].instr.id)].issued = true;
-					break;
 				}
 			}
 		}
@@ -468,13 +494,13 @@ int Simulator::process_rs() {
 }
 
 int Simulator::multi_execute() {
-	cout<<"came into multi execute"<<endl;
 	for (int i = 0; i < 3; ++i) {
-		if (execute_buffer[i].size() > 0 && new_issue[i]) {
-			cout<<execute_buffer[i][0].opcode<<endl;
-			execute (execute_buffer[i][0]);
-			execute_buffer[i][0].cycle_finish = m_clk + 1; // modify this per ALU opcode for varying latency
-			new_issue[i] = false;
+		if (new_issue[i]) {
+			for (int j = 0; j < execute_buffer[i].size(); ++j) {
+				cout<<"Execute: "<<execute_buffer[i][j].IR<<endl;
+				execute (execute_buffer[i][j]);
+				new_issue[i] = false;
+			}
 		}
 	}
 	return 1;
@@ -512,42 +538,45 @@ int Simulator::broadcast_cdb(int tag, int val){
 	for (int i = 0; i < NUM_REGISTERS; ++i) {
 		if (arf_flags[i].valid == false && arf_flags[i].tag == tag) {
 			register_file[i] = val;
+			arf_flags[i].valid = true;
 		}
 	}
 	return 1;
 }
 
 int Simulator::complete_instr() {
-	cout<<"came into multi complete instr"<<endl;
 	for (int i = 0; i < 3; ++i) {
-		if (execute_buffer[i].size() > 0 && execute_buffer[i][0].cycle_finish == m_clk) {
-			if (execute_buffer[i][0].opcode <= 3) {
-				broadcast_cdb(execute_buffer[i][0].rs_tag, execute_buffer[i][0].broadcast_output);
-			}
-			rob[get_rob_entry(execute_buffer[i][0].id)].finished = true;
-			rob[get_rob_entry(execute_buffer[i][0].id)].instr = execute_buffer[i][0];
-			pair<int,int> rs_id = get_rs_entry (execute_buffer[i][0].rs_tag);
-			RS[rs_id.first].erase(RS[rs_id.first].begin() + rs_id.second);
-			execute_buffer[i].erase(execute_buffer[i].begin());
-			tomasulo_update();
-			if(execute_buffer[i][0].opcode == 5){//JMP
-				control_stall = false;
-				pc = execute_buffer[i][0].alu_output;
-			}
-			if(execute_buffer[i][0].opcode == 6){//BEQZ
-				control_stall = false;
-				if(execute_buffer[i][0].cond)
+		while (execute_buffer[i].size() > 0) {
+			if (execute_buffer[i][0].cycle_finish == m_clk) {
+				cout << "Complete: "<<execute_buffer[i][0].IR<<endl;
+				if (execute_buffer[i][0].opcode <= 3) {
+					broadcast_cdb(execute_buffer[i][0].rs_tag, execute_buffer[i][0].broadcast_output);
+				}
+				rob[get_rob_entry(execute_buffer[i][0].id)].finished = true;
+				rob[get_rob_entry(execute_buffer[i][0].id)].instr = execute_buffer[i][0];
+				pair<int,int> rs_id = get_rs_entry (execute_buffer[i][0].id);
+				if(execute_buffer[i][0].opcode == 5){//JMP
+					control_stall = false;
 					pc = execute_buffer[i][0].alu_output;
-				else
-					pc = execute_buffer[i][0].pc + 2;
-			}
-			if(execute_buffer[i][0].opcode == 4){
-				store_buff s;
-				s.id = execute_buffer[i][0].id;
-				s.addr = execute_buffer[i][0].alu_output;
-				s.val = execute_buffer[i][0].B;
-				store_buffer.push_back(s);
-				//d_cache[ins_pipeline[ins_index].alu_output] = ins_pipeline[ins_index].B;
+				}
+				if(execute_buffer[i][0].opcode == 6){//BEQZ
+					control_stall = false;
+					if(execute_buffer[i][0].cond)
+						pc = execute_buffer[i][0].alu_output;
+					else
+						pc = execute_buffer[i][0].pc + 2;
+				}
+				if(execute_buffer[i][0].opcode == 4){
+					store_buff s;
+					s.id = execute_buffer[i][0].id;
+					s.addr = execute_buffer[i][0].alu_output;
+					s.val = execute_buffer[i][0].B;
+					store_buffer.push_back(s);
+					//d_cache[ins_pipeline[ins_index].alu_output] = ins_pipeline[ins_index].B;
+				}
+
+				RS[rs_id.first].erase(RS[rs_id.first].begin() + rs_id.second);
+				execute_buffer[i].erase(execute_buffer[i].begin() + 0);
 			}
 		}
 	}
@@ -570,9 +599,15 @@ int Simulator::tomasulo_update() {
 	return 1;
 }
 
+
 int Simulator::retire_instr() {
 	while (rob.size() > 0) {
 		if (rob.front().finished) {
+			cout << "Finish: " << rob.front().instr.IR << endl;
+			num_ins_executed++;
+			if (rob.front().instr.opcode == 7) {
+				return 0;
+			}
 			if (rob.front().instr.opcode == 4) {
 				int loc = find_store_buffer_entry(rob.front().instr.id);
 				d_cache[store_buffer[loc].addr] = store_buffer[loc].val;
@@ -580,14 +615,9 @@ int Simulator::retire_instr() {
 			}
 			
 			rob.erase(rob.begin());
-			num_ins_executed++;
 		}
 		else {
 			break;
-		}
-		if (rob.front().instr.opcode == 7){
-			num_ins_executed++;
-			return 0; 
 		}
 				
 	}
@@ -601,20 +631,22 @@ int Simulator::process_store_buffer() {
 int Simulator::simulate(){
 	load_i_cache();
 	print_i_cache();
-	while(1){
+	int i = 0;
+	while(true){
+		cout << "CLK: "<<m_clk<<endl;
 		multi_fetch();
 		multi_decode();
 		dispatch();
-		process_rs();
 		multi_execute();
 		complete_instr();
+		process_rs();
+		print_reg_file();
 		if (!retire_instr()) {
 		   // clean up store buffer
 			break;
 		}	
 		process_store_buffer();
 		next_clock_cycle();
-		//print_reg_file();
 		
 	}
 	print_d_cache();
